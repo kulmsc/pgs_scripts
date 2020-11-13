@@ -4,7 +4,7 @@ library(pROC)
 library(epitools)
 
 #author = commandArgs(trailingOnly=TRUE)
-author <- "Demenais"
+author <- "Christophersen"
 phen_method <- "icd_selfrep"
 score_method <- "auc_best_name"
 subrate_style <- "slow"
@@ -17,6 +17,7 @@ test_frac <- 1 - train_frac
 #THERE MAY BE PROBLEMS WITH SURV_DF
 
 #Read in the PGSs
+#Right at the top we read in the train and test eids explicitly
 all_scores <-  readRDS(paste0("../../do_score/final_scores/all_score.", tolower(author), ".RDS"))
 all_eid <- read.table("~/athena/doc_score/do_score/all_specs/for_eid.fam", stringsAsFactors=F)
 train_eid <- read.table(paste0("~/athena/doc_score/qc/cv_files/train_eid.", train_frac, ".txt"), stringsAsFactors=F)
@@ -32,6 +33,32 @@ scores <- all_scores[,grepl(tolower(author), colnames(all_scores))]
 scores <- scores[,apply(scores, 2, function(x) length(unique(x)) > 3)]
 scores <- apply(scores, 2, function(x) (x-mean(x)) / (max(abs((x-mean(x)))) * 0.01) )
 scores <- scores[,colnames(scores) == best_score,drop=F]
+
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+#                             ADDED COVARIATES                                      #
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+
+
+#get other scores - scores that I did not compile directly if they are available
+#First check to see if there are any additional scores for the disease currently under analysis
+#Then if so (in the for loop) we read in the other scores and sort them appropriately
+other_scores <- readRDS("../other_scores/final_scores/all_score.1.RDS")
+other_defs <- read.table("../descript_defs/author_scores", stringsAsFactors=F, header=T)
+other_defs <- other_defs[other_defs[,1] == author,]
+if(any(colnames(other_scores) %in% other_defs$PGS_Catalog_name)){
+  run_other_scores <- TRUE
+  other_scores <- other_scores[,colnames(other_scores) %in% other_defs$PGS_Catalog_name,drop=F]
+  other_eid <- read.table("../other_scores/final_scores/eid", stringsAsFactors=F)
+  other_scores <- data.frame(eid = other_eid, other_scores)
+} else {
+  run_other_scores <- FALSE
+}
+
+# END NEW #########################################################################################
+# END NEW #########################################################################################
+
 
 
 #Read in the phenotypes, order is: cancer sr, noncancer sr, icd9, icd10, oper, meds
@@ -145,13 +172,22 @@ covars <- covars[surv_df$time > 0,]
 pheno <- pheno[surv_df$time > 0]
 surv_df <- surv_df[surv_df$time > 0,]
 
-#exit()
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+#                             ADDED COVARIATES                                      #
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+# NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+
 #get the other covariates
+#Specifically, if there are covariates other than age and sex that other resources believe are risk factors for this disease then we read them in and order them such that they align with the already existing covariates
+#We can pull these additional covariates from two different place however, from the ICD or non ICD records
+#If from the non-ICD we first get the names from extra covars, and then subset those names out of the single_col_covars
 poss_covars <- read.table("../descript_defs/author_covar", stringsAsFactors=F, sep = "\t")
 extra_covars <- strsplit(poss_covars[poss_covars[,1] == author,2], ",")[[1]]
+extra_covars <- gsub(" ", "_", extra_covars)
 
 single_col_covars <- read.table("../get_covars/covar_data/single_col_covars", stringsAsFactors=F, header=T)
-single_col_covars <- single_col_covars[,colnames(single_col_covars) %in% c("eid", extra_covars)]
+single_col_covars <- single_col_covars[,colnames(single_col_covars) %in% c("eid", extra_covars), drop = F]
 single_col_covars <- single_col_covars[,!colnames(single_col_covars) %in% c("age", "sex"),drop=F]
 if(ncol(single_col_covars) > 1){
   single_col_covars <- single_col_covars[single_col_covars$eid %in% eid,,drop=F]
@@ -161,6 +197,9 @@ if(ncol(single_col_covars) > 1){
   single_col_covars <- NULL
 }
 
+#If from the ICD record we read in the specific covariate file made from the ICDs that goes with the disease
+#Similar with non-ICD we first have to check if there are any non-ICD covariates relevant, and then if so we go on and read them in and proceed with sorting
+#With non-ICD or ICD covariates we leave the covariate file NULL if there is nothing relevant
 
 hesin_decode <- read.table("../descript_defs/author_to_covar_hesin", stringsAsFactors=F)
 hesin_decode <- strsplit(hesin_decode[hesin_decode[,1] == author,2], ",")[[1]]
@@ -176,7 +215,8 @@ if(any(grepl(tolower(author), list.files("../get_covars/hesin_covars/")))){
   hesin_covar <- NULL
 }
 
-
+#We finish this extra covariate process by combining the ICD and non-ICD files into a singe extra_covar 
+#Also we set a variable indicating whether or not we should try to run models with extra covariates
 run_extra_covar <- TRUE
 if(!is.null(single_col_covars) & !is.null(hesin_covar)){
   extra_covar <- cbind(single_col_covars, hesin_covar)
@@ -188,8 +228,48 @@ if(!is.null(single_col_covars) & !is.null(hesin_covar)){
   run_extra_covar <- FALSE
 }
 
-df <- cbind(df, extra_covar)
-surv_df <- cbind(surv_df, extra_covar)
+# END NEW ####################################################################################
+##############################################################################################
+
+#add in the other interesting covariates
+if(run_other_scores){
+  other_scores <- other_scores[other_scores[,1] %in% eid,]
+  other_scores <- other_scores[order(other_scores[,1])[rank(eid)],]
+  other_scores <- other_scores[,-1,drop=F]
+}
+
+if(run_other_scores & run_extra_covar){
+  df <- cbind(df, extra_covar, other_scores)
+  surv_df <- cbind(surv_df, extra_covar, other_scores)
+} else if(run_other_scores){
+  df <- cbind(df, other_scores)
+  surv_df <- cbind(surv_df, other_scores)
+} else if(run_extra_covar){
+  df <- cbind(df, extra_covar)
+  surv_df <- cbind(surv_df, extra_covar)
+}
+
+#Subset the sex
+author_defs <- read.table("../descript_defs/author_defs", stringsAsFactors=F, header=T)
+subset_sex <- author_defs$sex[author_defs$author == author]
+if(subset_sex == "F"){
+  eid <- eid[df$sex == 0]
+  df <- df[df$sex == 0,]
+  surv_df <- surv_df[surv_df$sex == 0,]
+  df <- df[,-which(colnames(df) == "sex")]
+  surv_df <- surv_df[,-which(colnames(surv_df) == "sex")]
+  base_covars <- c("age + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10")
+}else if(subset_sex == "M"){
+  eid <- eid[df$sex == 1]
+  df <- df[df$sex == 1,]
+  surv_df <- surv_df[surv_df$sex == 1,]
+  df <- df[,-which(colnames(df) == "sex")]
+  surv_df <- surv_df[,-which(colnames(surv_df) == "sex")]
+  base_covars <- c("age + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10")
+} else {
+  base_covars <- c("age + sex + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10")
+}
+
 
 
 #Set up Fine and Gray
@@ -228,8 +308,7 @@ fg_death_test <- fg_death[fg_death$eid %in% test_eid[,1],]
     ###########################################################
     
     #BASE ###############################
-    base_mod <- coxph(Surv(fgstart, fgstop, fgstatus) ~  age + sex + PC1 + PC2 + PC3 + PC4 + PC5 +
-                       PC6 + PC7 + PC8 + PC9 + PC10, data = fg_diag_train, weight = fgwt)
+    base_mod <- coxph(as.formula(paste0("Surv(fgstart, fgstop, fgstatus) ~ ", base_covars)), data = fg_diag_train, weight = fgwt)
     
     base_conc_obj <- survConcordance(Surv(fgstart, fgstop, fgstatus) ~ predict(base_mod, fg_diag_test), data = fg_diag_test, weight = fgwt)
     base_conc <- c(base_conc_obj$conc, base_conc_obj$std.err)
@@ -254,8 +333,7 @@ fg_death_test <- fg_death[fg_death$eid %in% test_eid[,1],]
       #WITH SCORE ###########################
 
       #Make the model
-      score_mod <- coxph(Surv(fgstart, fgstop, fgstatus) ~ age + sex + PC1 + PC2 + PC3 + PC4 + PC5 +
-                          PC6 + PC7 + PC8 + PC9 + PC10 + score, data = fg_diag_train, weight = fgwt)
+      score_mod <- coxph(as.formula(paste0("Surv(fgstart, fgstop, fgstatus) ~ ", base_covars, " + score")), data = fg_diag_train, weight = fgwt)
       
       #CONCORDANCE ###################################
       score_conc_obj <- survConcordance(Surv(fgstart, fgstop, fgstatus) ~ predict(score_mod, fg_diag_test), data = fg_diag_test, weight = fgwt)
@@ -326,17 +404,27 @@ fg_death_test <- fg_death[fg_death$eid %in% test_eid[,1],]
     #                    NORMAL MODELS                        #
     ###########################################################
 
-    base_mod <- glm(pheno ~ age + sex + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10, data = df_train, family = "binomial")
+    base_mod <- glm(as.formula(paste0("pheno ~ ", base_covars)), data = df_train, family = "binomial")
     base_pred <- predict(base_mod, df_test)
     base_roc <- roc(df_test$pheno ~ base_pred, quiet=T)
     base_auc <- as.numeric(ci.auc(base_roc))
-    base_pr <- pr.curve(scores.class0 = base_pred, weights.class0 = df$pheno, curve = T)
+    base_pr <- pr.curve(scores.class0 = base_pred, weights.class0 = df_test$pheno, curve = T)
 
-    extra_base_mod <- glm(as.formula(paste0("pheno ~ age + sex + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 +", paste(colnames(extra_covar), collapse = "+"))), data = df_train, family = "binomial")
-    extra_base_pred <- predict(extra_base_mod, df_test)
-    extra_base_roc <- roc(df_test$pheno ~ extra_base_pred, quiet=T)
-    extra_base_auc <- as.numeric(ci.auc(base_roc))
-    extra_base_pr <- pr.curve(scores.class0 = extra_base_pred, weights.class0 = df$pheno, curve = T)
+    # NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+    # if there are additional covariates then I should create a model that includes these covariates
+    # then with this model form a complementary prediction from which ROC and PR curves can be drawn
+    # this is the same process that happens in the odds ratio for loop after if(run_extra_covar) ...
+    # NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+    if(run_extra_covar){
+      df_train_extra <- df_train[complete.cases(df_train),]
+      df_test_extra <- df_test[complete.cases(df_test),]
+      extra_base_mod <- glm(as.formula(paste0("pheno ~ ", base_covars, "+", paste(colnames(extra_covar), collapse = "+"))), data = df_train_extra, family = "binomial")
+      extra_base_pred <- predict(extra_base_mod, df_test_extra)
+      extra_base_roc <- roc(df_test_extra$pheno ~ extra_base_pred, quiet=T)
+      extra_base_auc <- as.numeric(ci.auc(base_roc))
+      extra_base_pr <- pr.curve(scores.class0 = extra_base_pred, weights.class0 = df_test_extra$pheno, curve = T)
+    }
+
 
     all_base_odds_ratio <- matrix(0, nrow = 6, ncol = 3)
     all_extra_base_odds_ratio <- matrix(0, nrow = 6, ncol = 3)
@@ -350,35 +438,74 @@ fg_death_test <- fg_death[fg_death$eid %in% test_eid[,1],]
       base_odds_ratio <- oddsratio.wald(base_odds_table)
       all_base_odds_ratio[k,] <- base_odds_ratio$measure[2,c(2,1,3)]
 
-      base_group <- rep(1, length(extra_base_pred))
-      base_group[extra_base_pred < quantile(extra_base_pred, 0.2)] <- 0
-      base_group[extra_base_pred > quantile(extra_base_pred, cut_off)] <- 2
-      base_odds_table <- matrix(c(sum(df_test$pheno == 1 & base_group == 2), sum(df_test$pheno == 0 & base_group == 2),
-                         sum(df_test$pheno == 1 & base_group == 0), sum(df_test$pheno == 0 & base_group == 0)), nrow = 2)
-      base_odds_ratio <- oddsratio.wald(base_odds_table)
-      all_extra_base_odds_ratio[k,] <- base_odds_ratio$measure[2,c(2,1,3)]
+      if(run_extra_covar){
+        base_group <- rep(1, length(extra_base_pred))
+        base_group[extra_base_pred < quantile(extra_base_pred, 0.2)] <- 0
+        base_group[extra_base_pred > quantile(extra_base_pred, cut_off)] <- 2
+        base_odds_table <- matrix(c(sum(df_test_extra$pheno == 1 & base_group == 2), sum(df_test_extra$pheno == 0 & base_group == 2),
+                         sum(df_test_extra$pheno == 1 & base_group == 0), sum(df_test_extra$pheno == 0 & base_group == 0)), nrow = 2)
+        base_odds_ratio <- oddsratio.wald(base_odds_table)
+        all_extra_base_odds_ratio[k,] <- base_odds_ratio$measure[2,c(2,1,3)]
+      }
       k <- k + 1
     }
-  
+ 
+
       #Make the model
-      score_mod <- glm(pheno ~ pheno ~ age + sex + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 + score, data = df_train, family = "binomial")
+      score_mod <- glm(as.formula(paste0("pheno ~", base_covars, " + score")), data = df_train, family = "binomial")
       score_pred <- predict(score_mod, df_test)
-      extra_score_mod <- glm(pheno ~ as.formula(paste0("pheno ~ age + sex + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 + score", paste(colnames(extra_covar), collapse = "+"))), data = df_train, family = "binomial")
-      extra_score_pred <- predict(extra_score_mod, df_test)      
+      # NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+      # just here as above we create models similar to the basic score model, although now we need additional covariates
+      # the first if statements will add extra covariates to this mode, the second statement adds the extra scores
+      # This series if statements will come up again several times after each type of statistic is prepared (AUC, OR, PR)
+      # NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW NEW
+      if(run_extra_covar){
+        extra_score_mod <- glm(as.formula(paste0("pheno ~ ", base_covars, " + score +", paste(colnames(extra_covar), collapse = "+"))), data = df_train_extra, family = "binomial")
+        extra_score_pred <- predict(extra_score_mod, df_test_extra)      
+      }
+      if(run_other_scores){
+        all_other_score_mod <- list()
+        all_other_score_pred <- list()
+        all_other_score_roc <- list()
+        all_other_score_auc <- list()
+        all_other_score_pr <- list()
+        for(k in 1:ncol(other_scores)){
+          all_other_score_mod[[k]] <- glm(as.formula(paste0("pheno ~ ", base_covars, " + ", colnames(other_scores)[k])), data = df_train, family = "binomial")
+          all_other_score_pred[[k]] <- predict(all_other_score_mod[[k]], df_test)
+        }
+      }
+      
 
       # AUC #####################################
       score_roc <- roc(df_test$pheno ~ score_pred, quiet=T)
       score_auc <- as.numeric(ci.auc(score_roc))
-      extra_score_roc <- roc(df_test$pheno ~ extra_score_pred, quiet=T)
-      extra_score_auc <- as.numeric(ci.auc(extra_score_roc))
+      if(run_extra_covar){
+        extra_score_roc <- roc(df_test_extra$pheno ~ extra_score_pred, quiet=T)
+        extra_score_auc <- as.numeric(ci.auc(extra_score_roc))
+      }
+      if(run_other_scores){
+        for(k in 1:ncol(other_scores)){
+          all_other_score_roc[[k]] <- roc(df_test$pheno ~ all_other_score_pred[[k]], quiet=T)
+          all_other_score_auc[[k]] <- as.numeric(ci.auc(all_other_score_roc[[k]]))
+        }
+      }
 
       # PR #####################################
       score_pr <- pr.curve(scores.class0 = score_pred, weights.class0 = df$pheno, curve = T)
-      extra_score_pr <- pr.curve(scores.class0 = extra_score_pred, weights.class0 = df$pheno, curve = T)  
+      if(run_extra_covar){
+        extra_score_pr <- pr.curve(scores.class0 = extra_score_pred, weights.class0 = df_test_extra$pheno, curve = T)  
+      }
+      if(run_other_scores){
+        for(k in 1:ncol(other_scores)){
+          all_other_score_pr[[k]] <- pr.curve(scores.class0 = all_other_score_pred[[k]], weights.class0 = df_test$pheno, curve = T)
+        }
+      }
+
 
       # ODDS RATIO #############################
-      all_score_odds_ratio <- matrix(0, nrow = 6, ncol = 3)
+      all_other_score_odds_ratio <- rep(list(matrix(0, nrow = 6, ncol = 3)), ncol(other_scores))
       all_extra_score_odds_ratio <- matrix(0, nrow = 6, ncol = 3)
+      all_score_odds_ratio <- matrix(0, nrow = 6, ncol = 3)
       k <- 1
       for(cut_off in c(0.5, 0.8, 0.9, 0.95, 0.99, 0.995)){
         score_group <- rep(1, length(score_pred))
@@ -390,14 +517,30 @@ fg_death_test <- fg_death[fg_death$eid %in% test_eid[,1],]
         score_odds_ratio <- oddsratio.wald(score_odds_table)
         all_score_odds_ratio[k,] <- score_odds_ratio$measure[2,c(2,1,3)]
 
-        score_group <- rep(1, length(extra_score_pred))
-        score_group[extra_score_pred < quantile(extra_score_pred, 0.2)] <- 0
-        score_group[extra_score_pred > quantile(extra_score_pred, cut_off)] <- 2
+        if(run_extra_covar){
+          score_group <- rep(1, length(extra_score_pred))
+          score_group[extra_score_pred < quantile(extra_score_pred, 0.2)] <- 0
+          score_group[extra_score_pred > quantile(extra_score_pred, cut_off)] <- 2
 
-        score_odds_table <- matrix(c(sum(df_test$pheno == 1 & score_group == 2), sum(df_test$pheno == 0 & score_group == 2),
-                         sum(df_test$pheno == 1 & score_group == 0), sum(df_test$pheno == 0 & score_group == 0)), nrow = 2)
-        score_odds_ratio <- oddsratio.wald(score_odds_table)
-        all_extra_score_odds_ratio[k,] <- score_odds_ratio$measure[2,c(2,1,3)]
+          score_odds_table <- matrix(c(sum(df_test_extra$pheno == 1 & score_group == 2), sum(df_test_extra$pheno == 0 & score_group == 2),
+                         sum(df_test_extra$pheno == 1 & score_group == 0), sum(df_test_extra$pheno == 0 & score_group == 0)), nrow = 2)
+          score_odds_ratio <- oddsratio.wald(score_odds_table)
+          all_extra_score_odds_ratio[k,] <- score_odds_ratio$measure[2,c(2,1,3)]
+        }
+
+        if(run_other_scores){
+          for(l in 1:ncol(other_scores)){
+            score_group <- rep(1, length(all_other_score_pred[[l]]))
+            score_group[all_other_score_pred[[l]] < quantile(all_other_score_pred[[l]], 0.2)] <- 0
+            score_group[all_other_score_pred[[l]] > quantile(all_other_score_pred[[l]], cut_off)] <- 2
+
+            score_odds_table <- matrix(c(sum(df_test$pheno == 1 & score_group == 2), sum(df_test$pheno == 0 & score_group == 2),
+                           sum(df_test$pheno == 1 & score_group == 0), sum(df_test$pheno == 0 & score_group == 0)), nrow = 2)
+            score_odds_ratio <- oddsratio.wald(score_odds_table)
+            all_other_score_odds_ratio[[l]][k,] <- score_odds_ratio$measure[2,c(2,1,3)]
+          }
+        }
+
         k <- k + 1
       }
     
@@ -405,9 +548,20 @@ fg_death_test <- fg_death[fg_death$eid %in% test_eid[,1],]
 #Get answers together ##################################################
 #previously also held the base_full_cumhaz but memory gets to be alot
 all_base_holder <- list("conc" = base_conc, "survfit" = base_avg_cumhaz, "auc" = list(base_roc, base_auc), "or" = all_base_odds_ratio, "pr" = base_pr)
-all_extra_holder <- list("base_auc" = list(extra_base_roc, extra_base_auc), "base_or" = all_extra_base_odds_ratio, "auc" = list(extra_score_roc, extra_score_auc), "or" = all_extra_score_odds_ratio)
+if(run_extra_covar){
+  all_extra_holder <- list("base_auc" = list(extra_base_roc, extra_base_auc), "base_pr" = extra_base_pr, "base_or" = all_extra_base_odds_ratio, "auc" = list(extra_score_roc, extra_score_auc), "pr" = extra_score_pr, "or" = all_extra_score_odds_ratio)
+} else {
+  all_extra_holder <- list(NULL)
+}
+
+if(run_other_scores){
+  all_other_holder <- list("auc" = list(all_other_score_roc, all_other_score_auc), "pr" = all_other_score_pr, "or" = all_other_score_odds_ratio)
+} else {
+  all_other_holder <- list(NULL)
+}
+
 misc_info <- list("phen_method" = phen_method, "subrate_style" = subrate_style, "train_frac" = train_frac, "score_method" = score_method)
-final_obj <- list("conc" = score_conc, "survfit" = score_avg_cumhaz, "auc" = list(score_roc, score_auc), "or" = all_score_odds_ratio, "pr" = score_pr, "base" = all_base_holder, "score_names" = best_score, "misc" = misc_info, "extra" = all_extra_holder)
+final_obj <- list("conc" = score_conc, "survfit" = score_avg_cumhaz, "auc" = list(score_roc, score_auc), "or" = all_score_odds_ratio, "pr" = score_pr, "base" = all_base_holder, "score_names" = best_score, "misc" = misc_info, "extra" = all_extra_holder, "other" = all_other_holder)
 saveRDS(final_obj, paste0("final_stats/", author, "_res.RDS"))
 
 
