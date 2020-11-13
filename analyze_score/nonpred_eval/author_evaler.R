@@ -69,7 +69,23 @@ rm(escores)
 brit_train <- read.table("../../qc/cv_files/train_eid.0.6.txt", stringsAsFactors=F)
 brit_test <- read.table("../../qc/cv_files/test_eid.0.4.txt", stringsAsFactors=F)
 
-exit()
+#remove possible sex group
+author_defs <- read.table("../descript_defs/author_defs", stringsAsFactors=F, header=T)
+sex_group <- author_defs[author_defs[,1] == author, 3]
+if(sex_group == "M"){
+  brit_scores <- brit_scores[brit_covars$sex == 1,]
+  brit_eid <- brit_eid[brit_covars$sex == 1,]
+  brit_pheno <- brit_pheno[brit_covars$sex == 1,]
+  brit_dates <- brit_dates[brit_covars$sex == 1,]
+  brit_covars <- brit_covars[brit_covars$sex == 1,]
+}else if(sex_group == "F"){
+  ethnic_scores <- ethnic_scores[brit_covars$sex == 0,]
+  ethnic_eid <- ethnic_eid[ethnic_covars$sex == 0,]
+  ethnic_pheno <- ethnic_pheno[ethnic_covars$sex == 0,]
+  ethnic_dates <- ethnic_dates[ethnic_covars$sex == 0,]
+  ethnic_covars <- ethnic_covars[ethnic_covars$sex == 0,]
+}
+
 
 ##############################################
 ########### SCORE SIZES ####################
@@ -151,10 +167,37 @@ return_pheno_defs <- list("all_phen_auc" = all_phen_auc, "total_phens" = unlist(
 
 
 ##############################################
+########### SEX DIFFERENCES ####################
+##############################################
+
+if(sex_group == "A"){
+  all_sex_auc <- matrix(0, nrow = ncol(brit_scores), ncol = 6)
+
+  df <- data.frame(phen = diag_phen, brit_covars)
+  for(j in 1:ncol(brit_scores)){
+    df$score <- brit_scores[,j]
+    train_df <- df[df$eid %in% brit_train[,1],]
+    test_df <- df[df$eid %in% brit_test[,1],]
+    for(sex in c(0,1)){
+      sub_train_df <- train_df[train_df$sex == sex,]
+      sub_test_df <- test_df[test_df$sex == sex,]
+      sub_train_df <- sub_train_df[,-which(colnames(sub_train_df) == "sex")]
+      sub_test_df <- sub_test_df[,-which(colnames(sub_test_df) == "sex")]
+      mod <- glm(phen ~ age + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 + score, data = sub_train_df, family = "binomial")
+      test_roc <- roc(sub_test_df$phen ~ predict(mod, sub_test_df))
+      all_sex_auc[j,(sex*3+1):(sex*3+3)] <- as.numeric(ci.auc(test_roc))
+    }
+  }
+} else {
+  all_sex_auc <- NULL
+}
+
+return_sex_split <- list("all_sex_auc" = all_sex_auc)
+
+##############################################
 ########### RACIAL GROUPS ####################
 ##############################################
 
-exit()
 
 asian_fam <- read.table("~/athena/ukbiobank/custom_qc/fam_files/asian_fam", stringsAsFactors=F)
 african_fam <- read.table("~/athena/ukbiobank/custom_qc/fam_files/african_fam", stringsAsFactors=F)
@@ -260,5 +303,5 @@ return_sibling_groups <- list("all_sib_conc" = all_sib_conc)
 ###########################
 
 extra_info <- list(score_names = colnames(brit_scores))
-save_obj <- list("score_sizes" = return_score_sizes, "pheno_defs" = return_pheno_defs, "ethnic" = return_ethnic_groups, "sibs" = return_sibling_groups, "extra" = extra_info)
+save_obj <- list("score_sizes" = return_score_sizes, "pheno_defs" = return_pheno_defs, "sex_split" = return_sex_split, "ethnic" = return_ethnic_groups, "sibs" = return_sibling_groups, "extra" = extra_info)
 saveRDS(save_obj, paste0("per_score_results/", tolower(author), ".res.RDS"))

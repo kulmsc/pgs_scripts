@@ -2,8 +2,8 @@ library(survival)
 library(pROC)
 library(epitools)
 
-author = commandArgs(trailingOnly=TRUE)
-#author <- "Demenais"
+#author = commandArgs(trailingOnly=TRUE)
+author <- "Schumacher"
 phen_method <- "icd_selfrep"
 subrate_style <- "fast"
 train_frac <- 0.6
@@ -12,19 +12,7 @@ input_folds <- 3
 input_repeats <- 3
 
 
-
-#THERE MAY BE PROBLEMS WITH SURV_DF
-
 #Read in the PGSs and sort down to training
-
-#all_scores <- read.table("~/athena/doc_score/do_score/final_scores/all_scores.txt.gz", stringsAsFactors=F, header = T)
-#all_scores <- list()
-#all_files <- list.files("~/athena/doc_score/do_score/final_scores", "RDS")
-#for(i in 1:length(all_files)){
-#  all_scores[[i]] <- readRDS(paste0("~/athena/doc_score/do_score/final_scores/", all_files[i]))
-#}
-#all_scores <- do.call("cbind", all_scores)
-
 all_scores <-  readRDS(paste0("../../do_score/final_scores/all_score.", tolower(author), ".RDS"))
 all_eid <- read.table("~/athena/doc_score/do_score/all_specs/for_eid.fam", stringsAsFactors=F)
 train_eid <- read.table(paste0("~/athena/doc_score/qc/cv_files/train_eid.", train_frac, ".txt"), stringsAsFactors=F)
@@ -50,6 +38,7 @@ for(i in 1:ncol(dates)){
     dates[,i] <- as.Date(dates[,i], "%d/%m/%Y")
   }
 }
+#exit()
 
 if(phen_method == "icd"){
   pheno <- pheno[,3:4]
@@ -77,7 +66,6 @@ if(phen_method == "double"){
   pheno[pheno > 1] <- 1
 }
 
-
 #Read in the eids used that are the same order as the pheno and dates, then subset the pheno and dates accordingly
 pheno_eids <- read.table("../construct_defs/eid.csv", header = T)
 pheno_eids <- pheno_eids[order(pheno_eids[,1]),]
@@ -88,6 +76,7 @@ pheno_eids <- pheno_eids[pheno_eids %in% eid]
 dates <- dates[order(pheno_eids)[rank(eid)]]
 pheno <- pheno[order(pheno_eids)[rank(eid)]]
 #Note that pheno_eids should not be used after this point, only eid
+
 
 #Read in the base covars
 covars <- readRDS("../get_covars/base_covars.RDS")
@@ -129,7 +118,6 @@ surv_df <- data.frame(time = as.numeric(as.Date(end_date) - as.Date(start_date))
 df <- data.frame(pheno, covars[,-1])
 
 #need to remove people where the diagnosis occured before the percieved start date
-#exit()
 
 #need to remove people that had diagnosis before accepted start of the study
 scores <- scores[surv_df$time > 0,]
@@ -138,6 +126,28 @@ covars <- covars[surv_df$time > 0,]
 pheno <- pheno[surv_df$time > 0]
 surv_df <- surv_df[surv_df$time > 0,]
 
+#author_defs
+author_defs <- read.table("../descript_defs/author_defs", stringsAsFactors=F, header=T)
+subset_sex <- author_defs$sex[author_defs$author == author]
+if(subset_sex == "F"){
+  pheno <- pheno[df$sex == 0]
+  covars <- covars[df$sex == 0,]
+  scores <- scores[df$sex == 0,]
+  eid <- eid[df$sex == 0]
+  df <- df[df$sex == 0,]
+  surv_df <- surv_df[surv_df$sex == 0,]
+  base_covars <- c("age + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10")
+}else if(subset_sex == "M"){
+  pheno <- pheno[df$sex == 1]
+  covars <- covars[df$sex == 1,]
+  scores <- scores[df$sex == 1,]
+  eid <- eid[df$sex == 1]
+  df <- df[df$sex == 1,]
+  surv_df <- surv_df[surv_df$sex == 1,]
+  base_covars <- c("age + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10")
+} else {
+  base_covars <- c("age + sex + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10")
+}
 
 #Set up Fine and Gray
 print("finegray")
@@ -170,7 +180,6 @@ for(i in 1:input_repeats){
 }
 
 
-
 overall_counter <- 1
 all_conc_holder <- list()
 all_survfit_holder <- list()
@@ -196,8 +205,7 @@ for(nrepeat in 1:input_repeats){
     #                    SURVIVAL ANALYSES                    #
     ###########################################################
     
-    base_mod <- coxph(Surv(fgstart, fgstop, fgstatus) ~  age + sex + PC1 + PC2 + PC3 + PC4 + PC5 +
-                       PC6 + PC7 + PC8 + PC9 + PC10, data = fg_diag_train, weight = fgwt)
+    base_mod <- coxph(as.formula(paste0("Surv(fgstart, fgstop, fgstatus) ~", base_covars)), data = fg_diag_train, weight = fgwt)
     
     base_conc <- survConcordance(Surv(fgstart, fgstop, fgstatus) ~ predict(base_mod, fg_diag_test), data = fg_diag_test, weight = fgwt)
 
@@ -227,8 +235,7 @@ for(nrepeat in 1:input_repeats){
       surv_df_train$score <- scores[surv_df$eid %in% repeat_list[[nrepeat]][[nfold]][["train"]],i]
 
       #Make the model
-      score_mod <- coxph(Surv(fgstart, fgstop, fgstatus) ~ age + sex + PC1 + PC2 + PC3 + PC4 + PC5 +
-                          PC6 + PC7 + PC8 + PC9 + PC10 + score, data = fg_diag_train, weight = fgwt)
+      score_mod <- coxph(as.formula(paste0("Surv(fgstart, fgstop, fgstatus) ~", base_covars, "+ score")), data = fg_diag_train, weight = fgwt)
       
       #CONCORDANCE ###################################
       score_conc_obj <- survConcordance(Surv(fgstart, fgstop, fgstatus) ~ predict(score_mod, fg_diag_test), data = fg_diag_test, weight = fgwt)
