@@ -3,13 +3,29 @@ library(ggplot2)
 library(cowplot)
 theme_set(theme_cowplot())
 
-author <- "Christophersen"
+author <- "Kottgen"
+all_authors <- unlist(lapply(strsplit(grep("surv", list.files("tune_results/"), value = T), "_", fixed = T), function(x) x[1]))
+#all_authors <- all_authors[-which(all_authors) == "Xie"]
+
+method_dict <- read.table("local_info/method_names", stringsAsFactors = F)
+
+convert_names <- function(x, the_dict = method_dict){
+  y <- rep(NA, length(x))
+  for(i in 1:length(x)){
+    if(x[i] %in% the_dict[,1]){
+      y[i] <- the_dict[the_dict[,1] == x[i], 2]
+    }
+  }
+  return(y)
+}
+
+for(author in all_authors){
 
 res <- readRDS(paste0("tune_results/", author, "_res.RDS"))
 
 split_score_names <- str_split(res[["score_names"]], fixed("."), simplify = T)
-simple_name <- paste0(split_score_names[,3], "-", split_score_names[,2])
-method_name <- split_score_names[,3]
+simple_name <- paste0(convert_names(split_score_names[,3]), " - ", split_score_names[,2])
+method_name <- convert_names(split_score_names[,3])
 
 
 do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option = FALSE, best_stat = "auc"){
@@ -27,7 +43,7 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
   mean_survfit <- matrix(0, nrow = length(res[["survfit"]][[1]]), ncol = 6)
   for(i in 1:length(res[["survfit"]])){
     for(j in 1:length(res[["score_names"]])){
-      mean_survfit[j,] <- mean_survfit[j,] + as.numeric(tail(res[["survfit"]][[i]][[j]],1)[-1])
+      mean_survfit[j,] <- mean_survfit[j,] + as.numeric(res[["survfit"]][[i]][[j]])
     }
   }
   mean_survfit <- mean_survfit/length(res[["survfit"]])
@@ -43,7 +59,7 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
   for(i in 1:length(res[["base"]][[1]])){
     base_conc <- base_conc + as.numeric(c(res[["base"]][[1]][[i]]$concordance,
                                           res[["base"]][[1]][[i]]$std.err,
-                                          res[["base"]][[1]][[i]]$std.err * 1.96))
+                                         res[["base"]][[1]][[i]]$std.err * 1.96))
   }
   base_conc <- base_conc/length(res[["base"]][[1]])
   base_conc_mat <- data.frame("base", "base", t(base_conc), stringsAsFactors = F)
@@ -51,7 +67,7 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
   
   base_survfit <- matrix(0, nrow = 1, ncol = 6)
   for(i in 1:length(res[["base"]][[2]])){
-    base_survfit <- base_survfit + as.numeric(tail(res[["base"]][[2]][[i]],1)[-1])
+    base_survfit <- base_survfit + as.numeric(res[["base"]][[2]][[i]])
   }
   base_survfit <- base_survfit/9
   
@@ -79,7 +95,7 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
     labs(x = "Concordance", y = "Score Name") +
     geom_vline(xintercept = base_conc[1], linetype = "dashed", alpha = 0.3)
   
- 
+   conc$diff_conc <- conc$conc - base_conc[1]
  
    #AUC PLOT
    auc <- data.frame(simple_name, method_name, mean_auc)
@@ -91,7 +107,7 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
     labs(x = "AUC", y = "Score Name") +
     geom_vline(xintercept = base_auc[2], linetype = "dashed", alpha = 0.3)
  
- 
+   auc$diff_auc <- auc$auc - base_auc[2]
  
    #EVENT RATE
    km_df <- mean_survfit[subset_inds,]
@@ -108,11 +124,17 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
      geom_errorbar(position = position_dodge(width = 0.1), width = 0.2) +
      labs(y = "Cumulative Hazard", x = "Score Name", color = "Risk\nGroup") +
      theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+      scale_color_discrete(labels = c("Low", "Intermed.", "High")) +
       geom_hline(yintercept = base_survfit[1], linetype = "dashed", alpha = 0.3) +
       geom_hline(yintercept = base_survfit[2], linetype = "solid", alpha = 0.3) +
       geom_hline(yintercept = base_survfit[3], linetype = "dashed", alpha = 0.3)
  
  
+   #CHANGE HERE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   new_km_df <- km_df[seq(3, nrow(km_df), 3),]
+   new_km_df$mean_vals <- new_km_df$mean_vals - km_df$mean_vals[seq(1, nrow(km_df), 3)]
+   new_km_df$diff_mean_vals <- new_km_df$mean_vals - (base_survfit[3]-base_survfit[1])
+   # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
  
    #ODDS RATIO
    odds_df <- data.frame(mean_or, simple_name, method_name)
@@ -124,6 +146,12 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
     labs(x = "Odds Ratio", y = "Score Name") +
      geom_vline(xintercept = base_or[2], linetype = "dashed", alpha = 0.3)
 
+   odds_df$diff_or <- odds_df$or - base_or[2]
+   
+   if(plot_ext == "best"){
+     saveRDS(list(conc, auc, new_km_df, odds_df), paste0("tune_results/", author, ".best_data.RDS"))
+   }
+   
    #Get best name among the subsetinds
    #################################################################
    if(best_stat == "conc"){
@@ -142,53 +170,52 @@ do_plot_series <- function(subset_inds, draw_plot_option = "none", save_option =
    
    #make the plots
    #################################################################
- if(draw_plot_option == "all"){
-  plot(the_auc_plot)
-  plot(the_conc_plot)
-  plot(the_or_plot)
-  plot(the_km_plot)
+   if(draw_plot_option == "all"){
+    plot(the_auc_plot)
+    plot(the_conc_plot)
+    plot(the_or_plot)
+    plot(the_km_plot)
+    
+    if(save_option){
+     ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".conc.tune.png"),
+            the_conc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
+     ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".auc.tune.png"),
+            the_auc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
+     ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".or.tune.png"),
+            the_or_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
+     ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".km.tune.png"),
+            the_km_plot + coord_flip() + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 6, height = 5.2)
+    }
   
-  if(save_option){
-   ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".conc.tune.png"),
-          the_conc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
-   ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".auc.tune.png"),
-          the_auc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
-   ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".or.tune.png"),
-          the_or_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
-   ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".km.tune.png"),
-          the_km_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 7, height = 6)
-  }
-  
- } else if(draw_plot_option == "choose_stat"){
-  if(best_stat == "conc"){
-   plot(the_conc_plot)
-   if(save_option){
-    ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".conc.tune.png"),
-           the_conc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
-   }
-    
-  }else if(best_stat == "auc"){
-   plot(the_auc_plot)
-   if(save_option){
-    ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".auc.tune.png"),
-           the_auc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
-   }
-    
-  }else if(best_stat == "km"){
-   plot(the_km_plot)
-   if(save_option){
-    ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".km.tune.png"),
-           the_km_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 7, height = 6)
-   }
-    
-  }else if(best_stat == "or"){
-   plot(the_or_plot)
-   if(save_option){
-    ggsave(paste0("output_plots/", tolower(author), ".", plot_ext, ".or.tune.png"),
-           the_or_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
-   }
-    
-  }
+   } else if(draw_plot_option == "choose_stat"){
+    if(best_stat == "conc"){
+     plot(the_conc_plot)
+     if(save_option){
+      ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".conc.tune.png"),
+             the_conc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
+     }
+      
+    }else if(best_stat == "auc"){
+     plot(the_auc_plot)
+     if(save_option){
+      ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".auc.tune.png"),
+             the_auc_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
+     }
+      
+    }else if(best_stat == "km"){
+     plot(the_km_plot)
+     if(save_option){
+      ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".km.tune.png"),
+             the_km_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 7, height = 4.5)
+     }
+      
+    }else if(best_stat == "or"){
+     plot(the_or_plot)
+     if(save_option){
+      ggsave(paste0("tune_plots/", tolower(author), ".", plot_ext, ".or.tune.png"),
+             the_or_plot + theme(plot.margin=unit(c(1,1,1,1), "cm")), "png", width = 5, height = 5)
+     }
+    }
  }
  
  return(best_name)
@@ -204,3 +231,4 @@ for(i in 1:length(unique(method_name))){
 
 final_best_name <- do_plot_series(which(simple_name %in% best_names), "all", TRUE)
 
+}
