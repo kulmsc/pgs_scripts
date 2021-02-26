@@ -225,15 +225,20 @@ for(nrepeat in 1:input_repeats){
                                     sd_lo = apply(base_full_cumhaz[,group_factor==0], 1, sd),
                                     sd_mid = apply(base_full_cumhaz[,group_factor==1], 1, sd),
                                     sd_hi = apply(base_full_cumhaz[,group_factor==2], 1, sd))
-    base_cumhaz <- base_cumhaz[!duplicated(base_cumhaz$mean_mid),]    
+    base_cumhaz <- tail(base_cumhaz[!duplicated(base_cumhaz$mean_mid),],1)
+    base_cumhaz <- base_cumhaz[-1]
+    rm(base_survfit)
+    rm(base_full_cumhaz)
     
     all_conc <- matrix(0, nrow = ncol(scores), ncol = 2)
     all_subrates <- list()
     
     for(i in 1:nrow(all_conc)){
+      print(i)
       fg_diag_train$score <- fg_scores_diag[fg_diag$eid %in% repeat_list[[nrepeat]][[nfold]][["train"]],i]
       fg_diag_test$score <- fg_scores_diag[fg_diag$eid %in% repeat_list[[nrepeat]][[nfold]][["test"]],i]
       surv_df_train$score <- scores[surv_df$eid %in% repeat_list[[nrepeat]][[nfold]][["train"]],i]
+      surv_df_test$score <- scores[surv_df$eid %in% repeat_list[[nrepeat]][[nfold]][["test"]],i]
 
       #Make the model
       score_mod <- coxph(as.formula(paste0("Surv(fgstart, fgstop, fgstatus) ~", base_covars, "+ score")), data = fg_diag_train, weight = fgwt)
@@ -245,26 +250,33 @@ for(nrepeat in 1:input_repeats){
       all_conc[i,2] <- score_conc_obj$std.err
       
      
-      exit()
+      #exit()
       #SURVFIT ##########################################
       #SLOW
       if(subrate_style == "slow"){
-        score_survfit <- survfit(score_mod, fg_diag_test, se.fit = F)
-        score_full_cumhaz <- score_survfit$cumhaz[,!duplicated(fg_diag_test$eid)]
-        final_cumhaz <- score_full_cumhaz[nrow(score_survfit$cumhaz),]
+
+        H0 <- basehaz(score_mod, centered = FALSE)
+        coef <- score_mod$coefficients
+        good_order <- colnames(surv_df_test)[colnames(surv_df_test) %in% names(coef)]
+        coef <- coef[order(names(coef))[rank(good_order)]]
+        prop_haz <- rowSums(t(t(surv_df_test[,colnames(surv_df_test) %in% names(coef)]) * coef))
+        H <- H0$hazard[nrow(H0)] * exp(prop_haz)
+
+        get_end <- function(score_full_cumhaz){
+          group_factor <- rep(1, length(score_full_cumhaz))
+          group_factor[score_full_cumhaz < quantile(score_full_cumhaz, 0.2)] <- 0
+          group_factor[score_full_cumhaz > quantile(score_full_cumhaz, 0.8)] <- 2
         
-        group_factor <- rep(1, length(final_cumhaz))
-        group_factor[final_cumhaz < quantile(final_cumhaz, 0.2)] <- 0
-        group_factor[final_cumhaz > quantile(final_cumhaz, 0.8)] <- 2
-        
-        pred_cumhaz_score <- data.frame(time = score_survfit$time,
-                                        mean_lo = apply(score_full_cumhaz[,group_factor==0], 1, mean),
-                                        mean_mid = apply(score_full_cumhaz[,group_factor==1], 1, mean),
-                                        mean_hi = apply(score_full_cumhaz[,group_factor==2], 1, mean),
-                                        sd_lo = apply(score_full_cumhaz[,group_factor==0], 1, sd),
-                                        sd_mid = apply(score_full_cumhaz[,group_factor==1], 1, sd),
-                                        sd_hi = apply(score_full_cumhaz[,group_factor==2], 1, sd))
-        pred_cumhaz_score <- pred_cumhaz_score[!duplicated(pred_cumhaz_score$mean_mid),]
+          pred_cumhaz_score <- data.frame(mean_lo = mean(score_full_cumhaz[group_factor==0]),
+                                        mean_mid = mean(score_full_cumhaz[group_factor==1]),
+                                        mean_hi = mean(score_full_cumhaz[group_factor==2]),
+                                        sd_lo = sd(score_full_cumhaz[group_factor==0]),
+                                        sd_mid = sd(score_full_cumhaz[group_factor==1]),
+                                        sd_hi = sd(score_full_cumhaz[group_factor==2]))
+          return(pred_cumhaz_score)
+        }
+
+        pred_cumhaz_score <- get_end(H)
 
       } else if(subrate_style == "fast"){ 
         #FAST
