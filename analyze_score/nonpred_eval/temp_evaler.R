@@ -3,8 +3,8 @@ library(data.table)
 library(pROC)
 library(epitools)
 
-author <- "Mahajan"
-#author <- commandArgs(trailingOnly=TRUE)
+#author <- "Malik"
+author <- commandArgs(trailingOnly=TRUE)
 
 #read in scores
 all_scores <-  readRDS(paste0("../../do_score/final_scores/all_score.", tolower(author), ".RDS"))
@@ -63,7 +63,6 @@ ethnic_score_eids <- ethnic_eids[(ethnic_eids[,1] %in% pheno_eids) & (ethnic_eid
 ethnic_scores <- ethnic_scores[order(ethnic_score_eids[,1]),]
 ethnic_eid <- ethnic_score_eids[order(ethnic_score_eids[, 1]), 1]
 
-exit()
 rm(scores)
 rm(escores)
 
@@ -116,62 +115,6 @@ if(sex_group == "M"){
 ########### SCORE SIZES ####################
 ##############################################
 
-splitter <- function(values, N){
-  inds = c(0, sapply(1:N, function(i) which.min(abs(cumsum(as.numeric(values)) - sum(as.numeric(values))/N*i))))
-  dif = diff(inds)
-  if(any(dif == 0)){
-    dif[1] <- dif[1] - sum(dif == 0)
-    dif[dif == 0] <- 1
-  }
-
-  re = rep(1:length(dif), times = dif)
-  return(split(values, re))
-}
-
-
-all_equal_splits_len <- matrix(0, nrow = ncol(brit_scores), ncol = 4)
-all_equal_splits_mean <- matrix(0, nrow = ncol(brit_scores), ncol = 4)
-all_quantiles <- matrix(0, nrow = ncol(brit_scores), ncol = 10)
-all_len <- rep(0, ncol(brit_scores))
-
-for(i in 1:ncol(brit_scores)){
-  score_name <- colnames(brit_scores)[i]
-  split_name <- strsplit(score_name, ".", fixed = T)[[1]]
-  score_files <- list.files(paste0("~/athena/doc_score/mod_sets/", author, "/"), glob2rx(paste0(split_name[1], "*", split_name[3], ".", split_name[2], ".ss")))
-  score_list <- list()
-  for(j in 1:length(score_files)){
-    #score_list[[j]] <- read.table(paste0("~/athena/doc_score/mod_sets/", author, "/", score_files[j]), stringsAsFactors = F, header = F)
-    score_list[[j]] <- as.data.frame(fread(paste0("~/athena/doc_score/mod_sets/", author, "/", score_files[j])))
-    colnames(score_list[[j]]) <- c("CHR", "BP", "RSID", "A1",  "A2", "SE", "BETA", "P", "ESS")
-  }
-
-  ss <- do.call("rbind", score_list)
-  ss <- ss[!is.na(ss[,7]),]
-  if(ss[1,7] == "BETA"){
-    ss <- ss[ss[,7] != "BETA",]
-    ss[,7] <- as.numeric(ss[,7])
-  }
-  ss[,7] <- as.numeric(ss[,7])
-  ss <- ss[!is.na(ss[,7]) & ss[,7] != 0,]
-  ss$eff <- abs(ss[,7])
-  ss <- ss[order(ss$eff),]
-
-  if(nrow(ss) > 10){
-    all_equal_splits_len[i,] <- unlist(lapply(splitter(ss$eff, 4), length))
-    all_equal_splits_mean[i,] <- unlist(lapply(splitter(ss$eff, 4), mean))
-  } else {
-    all_equal_splits_len[i,] <- rep(NA, 4)
-    all_equal_splits_mean[i,] <- rep(NA, 4)
-  }
-  if(nrow(ss) > 100){
-    all_quantiles[i,] <- quantile(ss$eff, 1:10/10)
-  } else {
-    all_quantiles[i,] <- rep(NA, 10)
-  }
-  all_len[i] <- length(ss$eff)
-}
-
-return_score_sizes <- list("all_equal_splits_len" = all_equal_splits_len, "all_equal_splits_mean" = all_equal_splits_mean, "all_quantiles" = all_quantiles, "all_len" = all_len)
 
 
 ##############################################
@@ -206,6 +149,12 @@ for(i in 1:5){
 
 return_pheno_defs <- list("all_phen_auc" = all_phen_auc, "total_phens" = unlist(lapply(all_phens, sum)))
 
+final_ans <- readRDS(paste0("per_score_results/", tolower(author), ".res.RDS"))
+final_ans[[2]] <- return_pheno_defs
+
+saveRDS(final_ans, paste0("per_score_results/", tolower(author), ".res.RDS"))
+
+exit()
 
 ##############################################
 ########### SEX DIFFERENCES ####################
@@ -239,7 +188,6 @@ return_sex_split <- list("all_sex_auc" = all_sex_auc)
 ########### RACIAL GROUPS ####################
 ##############################################
 
-exit()
 
 asian_fam <- read.table("~/athena/ukbiobank/custom_qc/fam_files/asian_fam", stringsAsFactors=F)
 african_fam <- read.table("~/athena/ukbiobank/custom_qc/fam_files/african_fam", stringsAsFactors=F)
@@ -266,22 +214,6 @@ for(i in 1:(ncol(ethnic_scores)-1)){
   african_stats[i,] <- c(mean(sub_score), sd(sub_score), quantile(sub_score, 0:10/10))
   sub_score <- ethnic_scores[ethnic_scores$ethnic == "asian",i]
   asian_stats[i,] <- c(mean(sub_score), sd(sub_score), quantile(sub_score, 0:10/10))
-}
-
-pvals <- matrix(NA, nrow = 6, ncol = ncol(ethnic_scores)-1)
-for(i in 1:(ncol(ethnic_scores)-1)){
-  brit_ind <- which(colnames(brit_scores) == colnames(ethnic_scores)[i])
-  euro <- ethnic_scores[ethnic_scores$ethnic == "euro",i]
-  african <- ethnic_scores[ethnic_scores$ethnic == "african",i]
-  asian <- ethnic_scores[ethnic_scores$ethnic == "asian",i]
-  brit <- brit_scores[,brit_ind]
-
-  pvals[1,i] <- wilcox.test(brit, euro)$p.value
-  pvals[2,i] <- wilcox.test(brit, african)$p.value
-  pvals[3,i] <- wilcox.test(brit, asian)$p.value
-  pvals[4,i] <- wilcox.test(euro, asian)$p.value
-  pvals[5,i] <- wilcox.test(euro, african)$p.value
-  pvals[6,i] <- wilcox.test(african, asian)$p.value
 }
 
 return_ethnic_groups <- list("names_to_keep" = colnames(ethnic_scores), "brit_stats" = brit_stats, "euro_stats" = euro_stats, "african_stats" = african_stats, "asian_stats" = asian_stats)
